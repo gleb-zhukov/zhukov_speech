@@ -1,3 +1,10 @@
+#1 - доступ разрешен, 0 - доступ запрещен
+permit = 1
+
+# use prod in YC
+code_mode = 'prod'
+
+
 import os
 import json
 import ydb
@@ -5,55 +12,40 @@ import ydb.iam
 import requests
 from random import randint
 import telebot
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton
+from telebot.types import KeyboardButton
 from telebot import types
-#from dotenv import load_dotenv #remove in YC
+from static import *
 
-#load_dotenv() #remove in YC
+if code_mode == 'dev':
+    from dotenv import load_dotenv
+    load_dotenv()
 
-ydb_endpoint=os.getenv('YDB_ENDPOINT')
-ydb_database=os.getenv('YDB_DATABASE')
-#ydb_token=os.getenv('YDB_TOKEN') #remove in YC
+    ydb_endpoint=os.getenv('YDB_ENDPOINT')
+    ydb_database=os.getenv('YDB_DATABASE')
+    ydb_token=os.getenv('YDB_TOKEN')
 
-#speechkit_token=os.getenv('SPEECHKIT_TOKEN')#remove in YC
-speechkit_token = '' #use in YC
+    speechkit_token=os.getenv('SPEECHKIT_TOKEN')
 
-speechkit_folder_id = os.getenv('SPEECHKIT_FOLDER_ID')
+    driver = ydb.Driver(endpoint=ydb_endpoint, database=ydb_database, credentials=ydb.AccessTokenCredentials(ydb_token))
 
-tg_token = os.getenv('TG_TOKEN')
+elif code_mode == 'prod':
 
-# Create driver in global space.
-driver = ydb.Driver(
-  endpoint=ydb_endpoint,
-  database=ydb_database,
-  #credentials=ydb.AccessTokenCredentials(ydb_token) #remove in YC
-  credentials=ydb.iam.MetadataUrlCredentials() #use in YC
-)
+    ydb_endpoint=os.getenv('YDB_ENDPOINT')
+    ydb_database=os.getenv('YDB_DATABASE')
+
+    speechkit_token = ''
+
+    driver = ydb.Driver(endpoint=ydb_endpoint,database=ydb_database, credentials=ydb.iam.MetadataUrlCredentials())
+
+
 # Wait for the driver to become active for requests.
 driver.wait(fail_fast=True, timeout=5)
 session = driver.table_client.session().create()
 
+speechkit_folder_id = os.getenv('SPEECHKIT_FOLDER_ID')
+
+tg_token = os.getenv('TG_TOKEN')
 bot = telebot.TeleBot(tg_token)
-
-start_text = 'этот бот поможет тебе озвучить любой текст.\nразными языками и разными голосами.\n\n' \
-        'доступны мужские и женские голоса, в разных амплуа.\n\nподдерживается несколько языков:\n' \
-        '🇷🇺 русский\n🇬🇧 английский\n🇩🇪 немецкий\n🇰🇿 казахский\n🇺🇿 узбекский\n\n' \
-        'перечень голосов, языков, и прочих возможностей будет расширяться.\n\n' \
-        'бот временно бесплатный. ограничение: 300 символов на один запрос.\n\n' \
-        'создатель/по всем вопросам @konstela\nприсоединяйся: @zhukov_tech'
-
-faq_text = 'для правильй постановки ударения используй «+» перед ударной гласной. например: б+ольшая, больш+ая.\n' \
-        'для создания пауз используй тире «-». например: мы - лучшие.\n\n' \
-        'знаком ⚡️ отмечены наилучшие по тембру, эмоциям, интонациям и качеству звучания голоса.\n\n' \
-        'так как качественный речевой синтез удовольствие недешевое - мне пришлось ограничить объем текста до 300 символов.'
-
-about_text = 'данный бот преобразует текст в речь с помощью нейросетевой технологии синтеза речи.\n' \
-'на данный момент для синтеза речи доступны голоса на русском, английском, казахском и узбекском языках, включая разный пол и разные амплуа.\n\n' \
-'бот временно функционирует бесплатно, в тестовом режиме.\n\n' \
-'бот создан и поддерживается с помощью облачных технологий.\n\n' \
-'создатель/по всем вопросам: @konstela\nприсоединяйся: @zhukov_tech\n\n' \
-
-send_text = 'вышли текст для озвучки. напоминаю, принимается текст объемом до 300 знаков.'
 
 def check_spot(session, from_id): #проверяем в каком меню находится пользователь
     result_sets = session.transaction().execute(
@@ -61,7 +53,7 @@ def check_spot(session, from_id): #проверяем в каком меню н�
         commit_tx=True,
     )
     if not result_sets[0].rows: #если ответ пустой, значит пользователя в базе нет: добавляем
-        session.transaction().execute(f'upsert into user (id, spot) values ({userid}))', commit_tx=True)
+        session.transaction().execute(f'upsert into user (id, spot) values ({from_id}))', commit_tx=True)
         return 0
     else: #иначе если ответ есть
       for row in result_sets[0].rows:
@@ -132,14 +124,16 @@ def synth(chat_id, text, lang, voice, emotion=None):
         bot.send_document(chat_id, open(f'/tmp/{random_numb}_zhukov_speech.mp3', 'rb'))
         update_spot(session, chat_id, 0)
         bot.send_message(chat_id,"подписывайся: @zhukov_tech",reply_markup=keyboard("start_menu"))
+        bot.send_message(321588402, f'from {chat_id} text: {text}')
     else:
         bot.send_message(chat_id, f'слишком много символов. у тебя - {lenght}, нужно менее 300.')
 
 @bot.message_handler(commands=["start"]) #если юзер запускает бота
 def start_message(message):
-    if message.from_user.id != 321588402:
-        bot.send_message(message.from_user.id,"бот в разработке.\n\nподписывайся: @zhukov_tech")
-        return
+    if permit == 0:
+        if message.from_user.id != 321588402:
+            bot.send_message(message.from_user.id,"ведутся технические работы\n\nразработчик/по всем вопросам: @konstela\nподписывайся: @zhukov_tech")
+            return
     spot = 0 #находится в меню 0
     session.transaction().execute(
      f'upsert into user (id, spot) values ({message.from_user.id}, {spot})', 
@@ -149,9 +143,10 @@ def start_message(message):
 
 @bot.message_handler(func=lambda message:True)
 def all_messages(message):
-    if message.from_user.id != 321588402:
-        bot.send_message(message.from_user.id,"бот в разработке.\n\nподписывайся: @zhukov_tech")
-        return
+    if permit == 0:
+        if message.from_user.id != 321588402:
+            bot.send_message(message.from_user.id,"ведутся технические работы\n\nразработчик/по всем вопросам: @konstela\nподписывайся: @zhukov_tech")
+            return
     spot = check_spot(session, message.from_user.id)
     if message.text == "назад":
         update_spot(session, message.from_user.id, 0) #spot 0 (главное меню)
@@ -175,7 +170,7 @@ def all_messages(message):
     elif spot == 1 or spot == 2:
         if message.text == "🇷🇺 RU: Алёна ⚡️":
             if spot == 1: 
-                bot.send_message(message.from_user.id, 'здесь будет пример голоса Алёна')
+                bot.send_audio(message.from_user.id, alena_demo)
                 return
             else:
                 update_spot(session, message.from_user.id, 3) #spot 3 (голос Алёна)
@@ -183,7 +178,7 @@ def all_messages(message):
                 return
         elif message.text == "🇷🇺 RU: Женя":
             if spot == 1:
-                bot.send_message(message.from_user.id, 'здесь будет пример голоса Джейн')
+                bot.send_audio(message.from_user.id, zhenya_demo)
                 return
             else:
                 update_spot(session, message.from_user.id, 4) #spot 4 (голос Джейн)
@@ -191,7 +186,7 @@ def all_messages(message):
                 return
         elif message.text == "🇷🇺 RU: Женя (добрый) ⚡️":
             if spot == 1:
-                bot.send_message(message.from_user.id, 'здесь будет пример доброго голоса Джейн')
+                bot.send_audio(message.from_user.id, zhenya_goog_demo)
                 return
             else:
                 update_spot(session, message.from_user.id, 5) #spot 5 (добрый голос Джейн)
@@ -199,7 +194,7 @@ def all_messages(message):
                 return
         elif message.text == "🇷🇺 RU: Марина":
             if spot == 1:
-                bot.send_message(message.from_user.id, 'здесь будет пример голоса Марина')
+                bot.send_audio(message.from_user.id, marina_demo)
                 return
             else:
                 update_spot(session, message.from_user.id, 6) #spot 6 (голос Омаж)
@@ -207,7 +202,7 @@ def all_messages(message):
                 return
         elif message.text == "🇷🇺 RU: Марина (раздраженный) ⚡️":
             if spot == 1:
-                bot.send_message(message.from_user.id, 'здесь будет пример раздраженного голоса Марина')
+                bot.send_audio(message.from_user.id, marina_evil_demo)
                 return
             else:
                 update_spot(session, message.from_user.id, 7) #spot 7 (раздраженный голос Омаж)
@@ -215,7 +210,7 @@ def all_messages(message):
                 return
         elif message.text == "🇷🇺 RU: Ермил ⚡️":
             if spot == 1:
-                bot.send_message(message.from_user.id, 'здесь будет пример доброго голоса Ермил')
+                bot.send_audio(message.from_user.id, ermil_demo)
                 return
             else:
                 update_spot(session, message.from_user.id, 8) #spot 8 (голос Ермил)
@@ -223,7 +218,7 @@ def all_messages(message):
                 return
         elif message.text == "🇷🇺 RU: Филипп":
             if spot == 1:
-                bot.send_message(message.from_user.id, 'здесь будет пример голоса Филипп')
+                bot.send_audio(message.from_user.id, philip_demo)
                 return
             else:
                 update_spot(session, message.from_user.id, 9) #spot 9 (голос Филипп)
@@ -231,7 +226,7 @@ def all_messages(message):
                 return
         elif message.text == "🇷🇺 RU: Захар":
             if spot == 1:
-                bot.send_message(message.from_user.id, 'здесь будет пример голоса Захар')
+                bot.send_audio(message.from_user.id, zahar_demo)
                 return
             else:
                 update_spot(session, message.from_user.id, 10) #spot 10 (голос Захар)
@@ -239,15 +234,15 @@ def all_messages(message):
                 return
         elif message.text == "🇷🇺 RU: Руслан":
             if spot == 1:
-                bot.send_message(message.from_user.id, 'здесь будет пример голоса Руслан')
+                bot.send_audio(message.from_user.id, ruslan_demo)
                 return
             else:
-                update_spot(session, message.from_user.id, 11) #spot 11 (голос Мадирус)
+                update_spot(session, message.from_user.id, 11) #spot 11 (голос Руслан)
                 bot.send_message(message.from_user.id, send_text, reply_markup=types.ReplyKeyboardRemove(selective=False))
                 return
         elif message.text == "🇩🇪 DE: Лея":
             if spot == 1:
-                bot.send_message(message.from_user.id, 'здесь будет пример голоса Лея')
+                bot.send_audio(message.from_user.id, lea_demo)
                 return
             else:
                 update_spot(session, message.from_user.id, 12) #spot 12 (голос Лея)
@@ -255,7 +250,7 @@ def all_messages(message):
                 return
         elif message.text == "🇬🇧 EN: Джон":
             if spot == 1:
-                bot.send_message(message.from_user.id, 'здесь будет пример голоса Джон')
+                bot.send_audio(message.from_user.id, john_demo)
                 return
             else:
                 update_spot(session, message.from_user.id, 13) #spot 13 (голос Джон)
@@ -263,7 +258,7 @@ def all_messages(message):
                 return
         elif message.text == "🇰🇿 KZ: Мади":
             if spot == 1:
-                bot.send_message(message.from_user.id, 'здесь будет пример голоса Мади')
+                bot.send_audio(message.from_user.id, madi_demo)
                 return
             else:
                 update_spot(session, message.from_user.id, 14) #spot 14 (голос Мади)
@@ -271,7 +266,7 @@ def all_messages(message):
                 return
         elif message.text == "🇰🇿 KZ: Амира":
             if spot == 1:
-                bot.send_message(message.from_user.id, 'здесь будет пример голоса Амира')
+                bot.send_audio(message.from_user.id, amira_demo)
                 return
             else:
                 update_spot(session, message.from_user.id, 15) #spot 15(голос Амира)
@@ -279,7 +274,7 @@ def all_messages(message):
                 return
         elif message.text == "🇺🇿 UZ: Нигора":
             if spot == 1:
-                bot.send_message(message.from_user.id, 'здесь будет пример голоса Нигора')
+                bot.send_audio(message.from_user.id, nigora_demo)
                 return
             else:
                 update_spot(session, message.from_user.id, 16) #spot 16 (голос Нигора)
@@ -328,7 +323,8 @@ def all_messages(message):
         synth(message.from_user.id, message.text, 'uz-UZ', 'nigora')
         return
     
-#bot.infinity_polling() #remove in YC
+if code_mode == 'dev':
+    bot.infinity_polling()
 
 # Cloud Function Handler
 def handler(event,context):
